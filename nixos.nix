@@ -89,10 +89,11 @@ let
     patchShebangs $out
   '';
 
-  mkPersistFile = { filePath, persistentStoragePath, method, enableDebugging, ... }:
+  mkPersistFile = { filePath, home, file, persistentStoragePath, method, enableDebugging, ... }:
     let
       mountPoint = filePath;
-      targetFile = concatPaths [ persistentStoragePath filePath ];
+      persistentPath = if home != null then file else filePath;
+      targetFile = concatPaths [ persistentStoragePath persistentPath ];
       args = escapeShellArgs [
         mountPoint
         targetFile
@@ -234,13 +235,14 @@ in
           {
             systemd.services =
               let
-                mkPersistFileService = { filePath, persistentStoragePath, ... }@args:
+                mkPersistFileService = { filePath, file, home, persistentStoragePath, ... }@args:
                   let
-                    targetFile = concatPaths [ persistentStoragePath filePath ];
+                    persistentPath = if home != null then file else filePath;
+                    targetFile = concatPaths [ persistentStoragePath persistentPath ];
                     mountPoint = escapeShellArg filePath;
                   in
                   {
-                    "persist-${escapeSystemdPath targetFile}" = {
+                    "persist-${escapeSystemdPath mountPoint}" = {
                       description = "Bind mount or link ${targetFile} to ${mountPoint}";
                       wantedBy = [ "local-fs.target" ];
                       before = [ "local-fs.target" ];
@@ -250,7 +252,7 @@ in
                         Type = "oneshot";
                         RemainAfterExit = true;
                         ExecStart = mkPersistFile args;
-                        ExecStop = pkgs.writeShellScript "unbindOrUnlink-${escapeSystemdPath targetFile}" ''
+                        ExecStop = pkgs.writeShellScript "unbindOrUnlink-${escapeSystemdPath mountPoint}" ''
                           set -eu
                           if [[ -L ${mountPoint} ]]; then
                               rm ${mountPoint}
@@ -288,11 +290,15 @@ in
 
             systemd.mounts =
               let
-                mkBindMount = { dirPath, persistentStoragePath, hideMount, allowTrash, ... }: {
+                mkBindMount = { dirPath, directory, home, persistentStoragePath, hideMount, allowTrash, ... }: {
                   wantedBy = [ "local-fs.target" ];
                   before = [ "local-fs.target" ];
                   where = concatPaths [ "/" dirPath ];
-                  what = concatPaths [ persistentStoragePath dirPath ];
+                  what = 
+                  let
+                    persistentPath = if home != null then directory else dirPath;
+                  in
+                  concatPaths [ persistentStoragePath persistentPath ];
                   unitConfig.DefaultDependencies = false;
                   type = "none";
                   options = concatStringsSep "," ([
